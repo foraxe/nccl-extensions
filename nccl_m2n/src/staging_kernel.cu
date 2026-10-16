@@ -813,7 +813,14 @@ __device__ __forceinline__ void pipe_copy_pack_layout_parallel(char* dst_staging
   size_t last_iter = (last_byte + inner - 1) / inner;
   size_t num_iters = last_iter - first_iter;
 
-  for (size_t i = (size_t)thread_in_group; i < num_iters; i += (size_t)warp_group_threads) {
+  // Give a full warp each wide row so neighboring lanes access neighboring
+  // vectors, rather than issuing one strided memory transaction per lane.
+  // Short rows retain lane ownership to amortize row-address calculations.
+  const int row_threads = inner >= 2048 && warp_group_threads >= 32 && warp_group_threads % 32 == 0 ? 32 : 1;
+  const int row_group = thread_in_group / row_threads;
+  const int row_lane = thread_in_group % row_threads;
+  const int row_groups = warp_group_threads / row_threads;
+  for (size_t i = (size_t)row_group; i < num_iters; i += (size_t)row_groups) {
     size_t iter = first_iter + i;
     size_t src_offset = pipe_layout_offset(layout, iter);
     size_t iter_byte_start = iter * inner;
@@ -823,7 +830,7 @@ __device__ __forceinline__ void pipe_copy_pack_layout_parallel(char* dst_staging
     size_t copy_len = copy_end - copy_start;
     const char* src_ptr = src_user_buffer + src_offset + copy_start;
     char* dst_ptr = dst_staging + (iter_byte_start + copy_start - byte_start);
-    pipe_copy_aligned(dst_ptr, src_ptr, copy_len);
+    staging_memcpy(dst_ptr, src_ptr, copy_len, row_threads, row_lane);
   }
 }
 
@@ -841,7 +848,11 @@ __device__ __forceinline__ void pipe_copy_unpack_layout_parallel(char* dst_user_
   size_t last_iter = (last_byte + inner - 1) / inner;
   size_t num_iters = last_iter - first_iter;
 
-  for (size_t i = (size_t)thread_in_group; i < num_iters; i += (size_t)warp_group_threads) {
+  const int row_threads = inner >= 2048 && warp_group_threads >= 32 && warp_group_threads % 32 == 0 ? 32 : 1;
+  const int row_group = thread_in_group / row_threads;
+  const int row_lane = thread_in_group % row_threads;
+  const int row_groups = warp_group_threads / row_threads;
+  for (size_t i = (size_t)row_group; i < num_iters; i += (size_t)row_groups) {
     size_t iter = first_iter + i;
     size_t dst_offset = pipe_layout_offset(layout, iter);
     size_t iter_byte_start = iter * inner;
@@ -851,7 +862,7 @@ __device__ __forceinline__ void pipe_copy_unpack_layout_parallel(char* dst_user_
     size_t copy_len = copy_end - copy_start;
     const char* src_ptr = src_staging + (iter_byte_start + copy_start - byte_start);
     char* dst_ptr = dst_user_buffer + dst_offset + copy_start;
-    pipe_copy_aligned(dst_ptr, src_ptr, copy_len);
+    staging_memcpy(dst_ptr, src_ptr, copy_len, row_threads, row_lane);
   }
 }
 
