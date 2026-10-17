@@ -968,9 +968,9 @@ __global__ __launch_bounds__(PIPE_TRAINER_THREADS, 1) void StagingReshardKernel_
             int remote_slot = (int)(rdma_fc.shadowTail % (uint64_t)rdma_fc.peerNumSlots);
             size_t remote_offset = rdma_fc.peerDataOffset + (size_t)remote_slot * rdma_fc.peerChunkSize;
             target_gin.put(target_world, target.peerWorldRank, target_window, remote_offset, target_window,
-                           local_recv_offset, chunk_bytes, ncclGin_None{},
+                           local_recv_offset, chunk_bytes, ncclGin_SignalInc{rdma_fc.remoteTailSignal},
                            ncclGin_CounterInc{local_fc.localPutCounter});
-            rdma_signal(target_gin, target_world, rdma_region, rdma_fc);
+            rdma_fc.shadowTail++;
             staging_cursor_store(rdma_region, rdma_fc.cursorTailOffset, rdma_fc.shadowTail);
           }
           chunks_done += (size_t)batch;
@@ -1243,8 +1243,9 @@ __global__ __launch_bounds__(PIPE_GENERATOR_THREADS, 1) void StagingReshardKerne
                   int remote_slot = (int)(ring_fc.shadowTail % (uint64_t)ring_fc.peerNumSlots);
                   size_t remote_offset = ring_fc.peerDataOffset + (size_t)remote_slot * ring_fc.peerChunkSize;
                   ring_gin.put(ring_world, ring_target_rank, ring_window, remote_offset, ring_window, recv_offset,
-                               this_bytes, ncclGin_None{}, ncclGin_CounterInc{ring_fc.localPutCounter});
-                  rdma_signal(ring_gin, ring_world, rdma_region, ring_fc);
+                               this_bytes, ncclGin_SignalInc{ring_fc.remoteTailSignal},
+                               ncclGin_CounterInc{ring_fc.localPutCounter});
+                  ring_fc.shadowTail++;
                   staging_cursor_store(rdma_region, ring_fc.cursorTailOffset, ring_fc.shadowTail);
                   ring_counter_val++;
                 }
